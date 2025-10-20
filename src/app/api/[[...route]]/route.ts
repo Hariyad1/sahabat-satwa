@@ -438,6 +438,111 @@ app.delete('/spec-visit/:clinicId/:vetId', async (c) => {
   return c.json({ data });
 });
 
+// STORED PROCEDURES
+
+// 1. Riwayat kunjungan hewan
+app.get('/animal/:id/visits', async (c) => {
+  const animalId = Number(c.req.param('id'));
+  if (Number.isNaN(animalId)) {
+    return c.json({ error: "invalid animalId" }, 400);
+  }
+
+  try {
+    console.log(`🔧 DEBUG: Calling sp_get_animal_visit_history with animalId: ${animalId}`);
+    const rows = await prisma.$transaction(async (tx) => {
+      console.log('  - Calling procedure...');
+      await tx.$executeRaw`CALL public.sp_get_animal_visit_history(${animalId}::INT, NULL::REFCURSOR)`;
+      console.log('  - Fetching data...');
+      const data = await tx.$queryRawUnsafe(`FETCH ALL FROM cur_animal_visit`);
+      console.log('  - Closing cursor...');
+      await tx.$executeRawUnsafe(`CLOSE cur_animal_visit`);
+      console.log('  - Success! Data length:', Array.isArray(data) ? data.length : 'unknown');
+      return data as unknown[];
+    });
+
+    return c.json({ data: rows });
+  } catch (error: any) {
+    console.error('❌ Detailed error in sp_get_animal_visit_history:');
+    console.error('   Message:', error?.message);
+    console.error('   Code:', error?.code);
+    console.error('   Meta:', error?.meta);
+    console.error('   Stack:', error?.stack);
+    return c.json({ error: 'Failed to get animal visit history', details: error?.message || 'Unknown error' }, 500);
+  }
+});
+
+// 2. Daftar hewan per jenis
+app.get('/animal-type/:id/animals', async (c) => {
+  const atId = Number(c.req.param('id'));
+  if (Number.isNaN(atId)) {
+    return c.json({ error: "invalid animal type id" }, 400);
+  }
+
+  try {
+    console.log(`🔧 DEBUG: Calling sp_get_animals_by_type with atId: ${atId}`);
+    const rows = await prisma.$transaction(async (tx) => {
+      console.log('  - Calling procedure...');
+      await tx.$executeRaw`CALL public.sp_get_animals_by_type(${atId}::INT, NULL::REFCURSOR)`;
+      console.log('  - Fetching data...');
+      const data = await tx.$queryRawUnsafe(`FETCH ALL FROM cur_animals_by_type`);
+      console.log('  - Closing cursor...');
+      await tx.$executeRawUnsafe(`CLOSE cur_animals_by_type`);
+      console.log('  - Success! Data length:', Array.isArray(data) ? data.length : 'unknown');
+      return data as unknown[];
+    });
+
+    return c.json({ data: rows });
+  } catch (error: any) {
+    console.error('❌ Detailed error in sp_get_animals_by_type:');
+    console.error('   Message:', error?.message);
+    console.error('   Code:', error?.code);
+    console.error('   Meta:', error?.meta);
+    return c.json({ error: 'Failed to get animals by type', details: error?.message || 'Unknown error' }, 500);
+  }
+});
+
+// 3. Daftar kunjungan dalam rentang tanggal
+app.get('/visits/range', async (c) => {
+  const startDate = c.req.query('start_date');
+  const endDate = c.req.query('end_date');
+
+  if (!startDate || !endDate) {
+    return c.json({ 
+      error: "Missing required parameters: start_date and end_date",
+      example: "/api/visits/range?start_date=2025-03-01&end_date=2025-06-30"
+    }, 400);
+  }
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+    return c.json({ 
+      error: "Invalid date format. Use YYYY-MM-DD format",
+      example: "2025-03-01"
+    }, 400);
+  }
+
+  try {
+    const rows = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`CALL public.sp_get_visits_in_range(${startDate}::date, ${endDate}::date, 'cur_visits_in_range')`;
+      const data = await tx.$queryRawUnsafe(`FETCH ALL FROM cur_visits_in_range`);
+      await tx.$executeRawUnsafe(`CLOSE cur_visits_in_range`);
+      return data as unknown[];
+    });
+
+    return c.json({ 
+      data: rows,
+      metadata: {
+        start_date: startDate,
+        end_date: endDate,
+        total_visits: rows.length
+      }
+    });
+  } catch (error) {
+    console.error('Error calling sp_get_visits_in_range:', error);
+    return c.json({ error: 'Failed to get visits in range' }, 500);
+  }
+});
+
 export const GET = handle(app);
 export const POST = handle(app);
 export const DELETE = handle(app);
